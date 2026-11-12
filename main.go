@@ -27,20 +27,28 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 	stopSpinner := make(chan struct{})
 	spinnerDone := make(chan struct{})
 
-	// Only print trace events when an actual autonomous tool (Web Search, yt-dlp, Bootstrap) runs.
-	// Never re-print startup/brain metadata on every turn so the focus stays 100% on the conversation!
+	thinkHeaderPrinted := false
+	ensureThinkHeader := func() {
+		if !thinkHeaderPrinted {
+			thinkHeaderPrinted = true
+			fmt.Printf("\n%s💭 Denken & Redeneren:%s\n", theme.PrimaryGold, theme.Reset)
+		}
+	}
+
 	onTrace := func(ev anubis.TraceEvent) {
 		if atomic.LoadInt32(&firstTokenReceived) == 1 {
 			return
 		}
-		if ev.Phase != "TOOL_EXEC" && ev.Phase != "BOOTSTRAP" {
+		if ev.Phase != "THINK_STEP" && ev.Phase != "TOOL_EXEC" && ev.Phase != "BOOTSTRAP" {
 			return
 		}
 		fmt.Print("\r\x1b[2K")
-		fmt.Printf("  %s %s[%s]%s %s\n",
+		ensureThinkHeader()
+		fmt.Printf("%s   │%s %s %s%s:%s %s%s%s\n",
+			theme.PrimaryGold, theme.Reset,
 			ev.Icon,
 			theme.LapisBlue, ev.Title, theme.Reset,
-			theme.TextMuted+ev.Detail+theme.Reset,
+			theme.TextMuted, ev.Detail, theme.Reset,
 		)
 	}
 
@@ -119,8 +127,8 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 			trimmed := strings.TrimLeft(initBuf, " \t\r\n")
 			if strings.HasPrefix(trimmed, "<think>") {
 				state = 1
-				fmt.Printf("\n%s💭 Denken & Redeneren:%s\n%s   │ %s",
-					theme.PrimaryGold, theme.Reset, theme.PrimaryGold, theme.Reset)
+				ensureThinkHeader()
+				fmt.Printf("%s   │ %s", theme.PrimaryGold, theme.Reset)
 				rest := trimmed[len("<think>"):]
 				thinkPending = rest
 			} else if len(trimmed) >= 8 || (len(trimmed) > 0 && !strings.HasPrefix("<think>", trimmed) && !strings.HasPrefix(trimmed, "<")) {
