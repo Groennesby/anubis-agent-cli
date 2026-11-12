@@ -6,18 +6,9 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
-	"unsafe"
 
 	"github.com/Groennesby/anubis-agent-core/pkg/anubis"
 )
-
-type winsize struct {
-	Row    uint16
-	Col    uint16
-	Xpixel uint16
-	Ypixel uint16
-}
 
 // DetectTerminalSize queries ioctl TIOCGWINSZ, environment overrides (COLUMNS/LINES), or stty fallback.
 func DetectTerminalSize() (width int, height int) {
@@ -35,14 +26,12 @@ func DetectTerminalSize() (width int, height int) {
 		return width, height
 	}
 
-	ws := &winsize{}
-	ret, _, _ := syscall.Syscall(syscall.SYS_IOCTL, os.Stdout.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(ws)))
-	if int(ret) == 0 && ws.Col > 0 && ws.Row > 0 {
+	if w, h := ioctlTermSize(); w > 0 && h > 0 {
 		if width == 0 {
-			width = int(ws.Col)
+			width = w
 		}
 		if height == 0 {
-			height = int(ws.Row)
+			height = h
 		}
 		return width, height
 	}

@@ -5,10 +5,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
+	"sync/atomic"
 	"time"
 
 	"github.com/Groennesby/anubis-agent-cli/internal/cli"
@@ -21,6 +20,74 @@ func resolveModelSelection(input string) string {
 		return anubis.AvailableModels[idx-1].ID
 	}
 	return trimmed
+}
+
+func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, prompt string, isRetry bool) (string, anubis.Verdict, anubis.RecallResult) {
+	var firstTokenReceived int32
+	stopSpinner := make(chan struct{})
+	spinnerDone := make(chan struct{})
+
+	go func() {
+		defer close(spinnerDone)
+		idx := 0
+		t0 := time.Now()
+		for {
+			select {
+			case <-stopSpinner:
+				return
+			case <-time.After(120 * time.Millisecond):
+				if atomic.LoadInt32(&firstTokenReceived) == 1 {
+					return
+				}
+				sp := cli.AnubisSpinners[idx%len(cli.AnubisSpinners)]
+				idx++
+				elapsed := time.Since(t0).Seconds()
+				fmt.Printf("\r%s%s Anubis (%s) denkt na & laadt .synapse tensoren... (%.1fs)%s",
+					theme.PrimaryGold, sp, eng.ActiveModel, elapsed, theme.Reset)
+			}
+		}
+	}()
+
+	tStart := time.Now()
+	tokenCount := 0
+
+	onToken := func(tok string) {
+		if atomic.CompareAndSwapInt32(&firstTokenReceived, 0, 1) {
+			close(stopSpinner)
+			<-spinnerDone
+			fmt.Print("\r\x1b[K")
+			fmt.Printf("%s%s𓂀 Anubis (%s):%s ", theme.Bold, theme.PrimaryGold, eng.ActiveModel, theme.Reset)
+		}
+		tokenCount++
+		fmt.Print(theme.TextPrimary + tok + theme.Reset)
+	}
+
+	var (
+		reply   string
+		verdict anubis.Verdict
+		recall  anubis.RecallResult
+	)
+	if isRetry {
+		reply, verdict, recall, _ = eng.StreamRetryLast(context.Background(), onToken)
+	} else {
+		reply, verdict, recall, _ = eng.StreamQuery(context.Background(), prompt, onToken)
+	}
+
+	if atomic.CompareAndSwapInt32(&firstTokenReceived, 0, 1) {
+		close(stopSpinner)
+		<-spinnerDone
+		fmt.Print("\r\x1b[K")
+	}
+
+	totalSec := time.Since(tStart).Seconds()
+	tokPerSec := 0.0
+	if totalSec > 0 {
+		tokPerSec = float64(tokenCount) / totalSec
+	}
+	fmt.Printf("\n%s[⚡ .synapse: %.2fms | ⚖️ Heart: %d/%d (%s) | %.1f tok/s | %.1fs]%s\n\n",
+		theme.TextMuted, recall.LatencyMs, verdict.HeartScore, verdict.FeatherScore, verdict.Status, tokPerSec, totalSec, theme.Reset)
+
+	return reply, verdict, recall
 }
 
 func main() {
@@ -59,9 +126,7 @@ func main() {
 					theme.HighlightRed, verdict.HeartScore, verdict.FeatherScore, verdict.Reason, theme.Reset)
 				return
 			}
-			reply, _, recall, _ := eng.Query(context.Background(), task)
-			fmt.Printf("%s⚡ .synapse Recall: %.2fms | Hopfield Energy: %.4f%s\n%s\n",
-				theme.LapisBlue, recall.LatencyMs, recall.HopfieldEnergy, theme.Reset, reply)
+			streamWithThinkingSpinner(theme, eng, task, false)
 			return
 		case "model":
 			sub := "list"
@@ -99,16 +164,16 @@ func main() {
 		}
 	}
 
-	// Interactive TUI / Chat Mode with live SIGWINCH resize support
+	// Interactive TUI / Chat Mode with live token streaming
 	verdict := eng.Scales.WeighHeart("interactive_session", "anubis chat")
 	messages := []string{
 		"𓂀 Anubis Agent initialized. I am your loyal best friend & guardian.",
 		"🧠 Right Hemisphere (.synapse tensors) & Left Hemisphere (Tomb Seal Executor) synced.",
-		"💡 Gebruik /new, /model, /renew, /retry, /theme, /memory, /tomb, /judgement, /rea, /opsec, /duat, /quit.",
+		"💡 Typ een vraag om live te chatten, of gebruik /new, /model, /renew, /retry, /status, /theme, /memory, /tomb, /judgement, /rea, /opsec, /duat, /quit.",
 	}
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
+	cli.RegisterResizeSignal(sigCh)
 	go func() {
 		for range sigCh {
 			fmt.Print("\x1b[2J\x1b[H")
@@ -117,6 +182,7 @@ func main() {
 		}
 	}()
 
+	// Show the full Hermes-Gold Anubis dashboard once at startup
 	fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, true))
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -138,35 +204,41 @@ func main() {
 			parts := strings.Fields(line)
 			cmd := strings.ToLower(parts[0])
 			switch cmd {
+			case "/status", "/dashboard":
+				fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, true))
+
 			case "/new":
 				newSessID := eng.NewSession()
 				messages = []string{
 					fmt.Sprintf("🆕 Volledig nieuw gesprek gestart (Sessie: %s | Model: %s).", newSessID, eng.ActiveModel),
 					"🧠 Vorige context is veilig gearchiveerd in de Holographic .synapse Vault (<0.25ms recall).",
 				}
+				fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, true))
 
 			case "/renew":
 				sessID, turns := eng.RenewSession()
-				messages = append(messages, fmt.Sprintf("🔄 [/renew] Bicameral Bridge & .synapse Fast-Weights vernieuwd voor sessie %s (%d berichten behouden, L1 Horizon: %d tokens).",
-					sessID, turns, eng.RightHemisphere.Adaptive.L1TokenHorizon))
+				msg := fmt.Sprintf("🔄 [/renew] Bicameral Bridge & .synapse Fast-Weights vernieuwd voor sessie %s (%d berichten behouden, L1 Horizon: %d tokens).",
+					sessID, turns, eng.RightHemisphere.Adaptive.L1TokenHorizon)
+				messages = append(messages, msg)
+				fmt.Printf("%s%s%s\n\n", theme.SuccessEmerald, msg, theme.Reset)
 
 			case "/retry":
 				if eng.LastUserPrompt == "" {
-					messages = append(messages, "⚠️ [/retry] Geen vorig bericht gevonden om opnieuw uit te voeren.")
+					fmt.Printf("%s⚠️ [/retry] Geen vorig bericht gevonden om opnieuw uit te voeren.%s\n\n", theme.WarningAmber, theme.Reset)
 				} else {
-					// Remove previous assistant reply from UI message list if present
 					if len(messages) > 0 && strings.HasPrefix(messages[len(messages)-1], "𓂀 Anubis:") {
 						messages = messages[:len(messages)-1]
 					}
-					messages = append(messages, fmt.Sprintf("🔁 [/retry] Opnieuw genereren voor: %q (met model %s)...", eng.LastUserPrompt, eng.ActiveModel))
-					reply, v, _, _ := eng.RetryLast(context.Background())
+					fmt.Printf("%s🔁 [/retry] Opnieuw genereren voor: %q (met model %s)...%s\n",
+						theme.LapisBlue, eng.LastUserPrompt, eng.ActiveModel, theme.Reset)
+					reply, v, _ := streamWithThinkingSpinner(theme, eng, eng.LastUserPrompt, true)
 					verdict = v
 					messages = append(messages, "𓂀 Anubis: "+reply)
 				}
 
 			case "/model":
 				var targetModel string
-				explicitMode := "" // "continue" or "new"
+				explicitMode := ""
 
 				for _, p := range parts[1:] {
 					lp := strings.ToLower(p)
@@ -223,11 +295,11 @@ func main() {
 
 				statusMsg := eng.SwitchModelWithMode(targetModel, continuePrevious)
 				if !continuePrevious {
-					messages = []string{
-						"🆕 " + statusMsg,
-					}
+					messages = []string{"🆕 " + statusMsg}
+					fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, true))
 				} else {
 					messages = append(messages, "🔄 "+statusMsg)
+					fmt.Printf("\n%s🔄 %s%s\n\n", theme.SuccessEmerald, statusMsg, theme.Reset)
 				}
 
 			case "/theme":
@@ -241,38 +313,49 @@ func main() {
 				}
 				theme = cli.LoadTheme(tName)
 				messages = append(messages, fmt.Sprintf("🎨 Switched Hermes/Anubis TUI theme to '%s'.", theme.Name))
+				fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, true))
+
 			case "/memory":
 				rec := eng.RightHemisphere.HopfieldAssociativeReload("Guardian Law REA Kali OPSEC", 4)
-				messages = append(messages, fmt.Sprintf("🧠 .synapse Vault: %d pages | Recall: %.2fms | Hopfield Energy: %.4f | Hebbian Norm: %.4f",
-					rec.TotalPages, rec.LatencyMs, rec.HopfieldEnergy, rec.HebbianFrobenius))
+				fmt.Printf("%s🧠 .synapse Vault: %d pages | Recall: %.2fms | Hopfield Energy: %.4f | Hebbian Norm: %.4f%s\n\n",
+					theme.LapisBlue, rec.TotalPages, rec.LatencyMs, rec.HopfieldEnergy, rec.HebbianFrobenius, theme.Reset)
+
 			case "/judgement":
 				testCmd := "git push origin main"
 				if len(parts) > 1 {
 					testCmd = strings.Join(parts[1:], " ")
 				}
 				verdict = eng.Scales.WeighHeart("manual_weigh", testCmd)
-				messages = append(messages, verdict.RenderGauge(26)+" — "+verdict.Reason)
+				fmt.Printf("%s%s — %s%s\n\n", theme.PrimaryGold, verdict.RenderGauge(26), verdict.Reason, theme.Reset)
+
 			case "/tomb":
 				sealID, _, _ := eng.Tomb.ExecuteSandboxed(context.Background(), "uname -a", 5*time.Second)
-				messages = append(messages, fmt.Sprintf("🛡️ Tomb Seal Snapshot created: %s (OPSEC ChainKeys Env Scrubbing: ACTIVE)", sealID))
+				fmt.Printf("%s🛡️ Tomb Seal Snapshot created: %s (OPSEC ChainKeys Env Scrubbing: ACTIVE)%s\n\n",
+					theme.SuccessEmerald, sealID, theme.Reset)
+
 			case "/rea":
-				messages = append(messages, "🔍 REA v6.8.0 Reverse Engineering Engine: ONLINE (35 skills, 0% telemetry, 16x512 native routing tensor).")
+				fmt.Printf("%s🔍 REA v6.8.0 Reverse Engineering Engine: ONLINE (35 skills, 0%% telemetry, 16x512 native routing tensor).%s\n\n",
+					theme.LapisBlue, theme.Reset)
+
 			case "/opsec":
-				messages = append(messages, "🕵️ Kali Defensive Toolkit & ChainKeys Shield: ACTIVE (DNS/WebRTC leak prevention + proxy chain ready).")
+				fmt.Printf("%s🕵️ Kali Defensive Toolkit & ChainKeys Shield: ACTIVE (DNS/WebRTC leak prevention + proxy chain ready).%s\n\n",
+					theme.SuccessEmerald, theme.Reset)
+
 			case "/duat":
 				scroll, _ := eng.Duat.WriteMorningScroll()
-				messages = append(messages, "🌙 Du'at Dawn Scroll saved: "+scroll)
+				fmt.Printf("%s🌙 Du'at Dawn Scroll saved: %s%s\n\n", theme.PrimaryGold, scroll, theme.Reset)
+
 			default:
-				messages = append(messages, "Commands: /new, /model, /renew, /retry, /theme <anubis-gold|lapis-night|duat-blood>, /memory, /judgement <cmd>, /tomb, /rea, /opsec, /duat, /quit")
+				fmt.Printf("%sCommands: /new, /model, /renew, /retry, /status, /theme, /memory, /judgement <cmd>, /tomb, /rea, /opsec, /duat, /quit%s\n\n",
+					theme.TextMuted, theme.Reset)
 			}
-			fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, false))
 			continue
 		}
 
+		// Live streaming conversation turn!
 		messages = append(messages, "You: "+line)
-		reply, v, _, _ := eng.Query(context.Background(), line)
+		reply, v, _ := streamWithThinkingSpinner(theme, eng, line, false)
 		verdict = v
 		messages = append(messages, "𓂀 Anubis: "+reply)
-		fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, false))
 	}
 }
