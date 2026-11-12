@@ -207,9 +207,9 @@ func main() {
 	// Interactive TUI / Chat Mode with live token streaming
 	verdict := eng.Scales.WeighHeart("interactive_session", "anubis chat")
 	messages := []string{
-		"𓂀 Anubis Agent initialized. I am your loyal best friend & guardian.",
-		"🧠 Right Hemisphere (.synapse tensors) & Left Hemisphere (Tomb Seal Executor) synced.",
-		"💡 Typ een vraag om live te chatten, of gebruik /new, /model, /renew, /retry, /status, /theme, /memory, /tomb, /judgement, /rea, /opsec, /duat, /quit.",
+		fmt.Sprintf("📜 Startup Brain geladen: %s (%d regels — Direct zichtbaar voor Lokaal, Gemini, ChatGPT & Claude Code).", eng.BrainDocPath, eng.BrainDocLines),
+		"🧠 Right Hemisphere (.synapse tensors) & Left Hemisphere (Tomb Seal Executor) synced (Voorkeur: Lokaal).",
+		"💡 Commands: /model (Lokaal, Gemini, ChatGPT, Claude Code), /brain, /new, /renew, /retry, /update, /status, /quit.",
 	}
 
 	sigCh := make(chan os.Signal, 1)
@@ -259,6 +259,41 @@ func main() {
 					cli.ReExecSelf()
 				}
 
+			case "/brain":
+				if len(parts) > 2 && strings.ToLower(parts[1]) == "add" {
+					rule := strings.Join(parts[2:], " ")
+					bPath, err := anubis.AppendBrainRule(rule)
+					if err != nil {
+						fmt.Printf("%s⚠️ Kon Brain regel niet opslaan: %v%s\n\n", theme.HighlightRed, err, theme.Reset)
+					} else {
+						eng.ProvisionModelIfNeeded(eng.ActiveModel)
+						msg := fmt.Sprintf("📜 Nieuwe regel toegevoegd aan %s (%d regels actief voor alle modellen)!", bPath, eng.BrainDocLines)
+						messages = append(messages, msg)
+						fmt.Printf("%s%s%s\n\n", theme.SuccessEmerald, msg, theme.Reset)
+					}
+				} else {
+					fmt.Printf("\n%s╭─ 📜 ANUBIS STARTUP BRAIN DOCUMENT (%s | %d regels) ───╮%s\n",
+						theme.PrimaryGold, eng.BrainDocPath, eng.BrainDocLines, theme.Reset)
+					fmt.Println(theme.TextPrimary + eng.BrainDocContent + theme.Reset)
+					fmt.Printf("%s╰─ 💡 Tip: Gebruik '/brain add <jouw vaste regel>' om een regel toe te voegen die elk model bij het opstarten ziet! ─╯%s\n\n",
+						theme.LapisBlue, theme.Reset)
+				}
+
+			case "/key":
+				if len(parts) < 3 {
+					fmt.Printf("%s🔑 Gebruik (optioneel): /key <gemini|openai|claude|deepseek> <jouw-api-key>\n   (Standaard werkt Anubis al 100%% direct zonder keys via Lokaal + Sovereign Brain Bridge!)%s\n\n",
+						theme.LapisBlue, theme.Reset)
+				} else {
+					prov := parts[1]
+					kVal := parts[2]
+					if err := anubis.SaveProviderAPIKey(prov, kVal); err != nil {
+						fmt.Printf("%s⚠️ Fout bij opslaan API key: %v%s\n\n", theme.HighlightRed, err, theme.Reset)
+					} else {
+						fmt.Printf("%s✅ API key voor %q veilig opgeslagen in ~/.anubis/keys.json! (%s ziet nu direct ANUBIS_BRAIN.md bij elke vraag)%s\n\n",
+							theme.SuccessEmerald, prov, prov, theme.Reset)
+					}
+				}
+
 			case "/new":
 				newSessID := eng.NewSession()
 				messages = []string{
@@ -304,13 +339,14 @@ func main() {
 				}
 
 				if targetModel == "" {
-					fmt.Printf("\n%s𓂀 KIES EEN MODEL (0%% Censuur — Lokaal of Router):%s\n", theme.PrimaryGold, theme.Reset)
+					fmt.Printf("\n%s𓂀 KIES EEN MODEL (Voorkeur op Lokaal — Elk model leest direct %s bij opstarten!):%s\n",
+						theme.PrimaryGold, eng.BrainDocPath, theme.Reset)
 					for i, m := range anubis.AvailableModels {
 						activeMark := " "
 						if m.ID == eng.ActiveModel {
 							activeMark = "*"
 						}
-						fmt.Printf("  %s[%d]%s %-26s — %s\n", theme.PrimaryGold, i+1, activeMark, m.ID, m.Label+theme.Reset)
+						fmt.Printf("  %s[%2d]%s %-38s — %s%s\n", theme.PrimaryGold, i+1, activeMark, m.ID, m.Label, theme.Reset)
 					}
 					fmt.Printf("%sVoer nummer (1-%d) of modelnaam in [huidig: %s]: %s",
 						theme.LapisBlue, len(anubis.AvailableModels), eng.ActiveModel, theme.Reset)
