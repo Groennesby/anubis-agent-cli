@@ -15,8 +15,7 @@ import (
 )
 
 // SelfUpdate updates the Anubis Agent CLI & GUI binaries in-place without requiring uninstall/reinstall.
-// 1. If the local source workspace (/Users/macm1pro/Documents/Anubis Agent) exists, it pulls latest changes from GitHub and recompiles natively.
-// 2. Otherwise, it downloads the latest prebuilt release binary from https://github.com/Groennesby/Anubis-Agent/releases/latest/download/...
+// Works seamlessly on both macOS (/opt/homebrew/bin) and Linux/Ubuntu Server (/usr/bin, /usr/local/bin).
 func SelfUpdate(t Theme) (string, error) {
 	var logs []string
 	localSrc := "/Users/macm1pro/Documents/Anubis Agent/anubis-agent-cli"
@@ -37,13 +36,16 @@ func SelfUpdate(t Theme) (string, error) {
 		"/opt/homebrew/bin/anubis",
 		"/opt/homebrew/Cellar/annubis/1.0.0/bin/annubis",
 		"/opt/homebrew/Cellar/annubis/1.0.0/bin/anubis",
+		"/usr/bin/anubis",
+		"/usr/bin/annubis",
+		"/usr/local/bin/anubis",
+		"/usr/local/bin/annubis",
 	}
 	if exePath != "" {
 		targetPaths = append(targetPaths, exePath)
 	}
 
 	if st, err := os.Stat(localSrc); err == nil && st.IsDir() && goBin != "" {
-		// Pull latest from GitHub if online (non-blocking if offline)
 		coreSrc := "/Users/macm1pro/Documents/Anubis Agent/anubis-agent-core"
 		_ = exec.Command("git", "-C", coreSrc, "pull", "--rebase", "origin", "main").Run()
 		_ = exec.Command("git", "-C", localSrc, "pull", "--rebase", "origin", "main").Run()
@@ -53,40 +55,25 @@ func SelfUpdate(t Theme) (string, error) {
 		cmd.Dir = localSrc
 		if out, buildErr := cmd.CombinedOutput(); buildErr == nil {
 			defer os.Remove(tmpBin)
-			updatedCount := 0
-			seen := map[string]bool{}
-			for _, tp := range targetPaths {
-				if seen[tp] {
-					continue
-				}
-				seen[tp] = true
-				if dir := filepath.Dir(tp); dir != "" {
-					if _, dErr := os.Stat(dir); dErr == nil {
-						_ = os.Remove(tp)
-						if copyErr := copyExecutable(tmpBin, tp); copyErr == nil {
-							updatedCount++
-						}
-					}
-				}
-			}
+			updatedCount := installBinaryToTargets(tmpBin, targetPaths)
 			_ = copyExecutable(tmpBin, filepath.Join(localSrc, "bin", "anubis"))
 			_ = copyExecutable(tmpBin, filepath.Join(localSrc, "bin", "annubis"))
-			logs = append(logs, fmt.Sprintf("⬆️ [/update] Gecompileerd vanaf nieuwste broncode & %d binaire paden in-place geüpdatet (zonder herinstallatie)!", updatedCount))
+			logs = append(logs, fmt.Sprintf("⬆️ [/update] Gecompileerd vanaf nieuwste broncode & %d binaire paden in-place geüpdatet!", updatedCount))
 			return strings.Join(logs, "\n"), nil
 		} else {
 			logs = append(logs, fmt.Sprintf("Lokale build overgeslagen (%s), schakel over naar GitHub Release download...", strings.TrimSpace(string(out))))
 		}
 	}
 
-	// Fallback: Download latest release tarball directly from GitHub Releases
+	// Download latest release tarball directly from GitHub Releases (works on Ubuntu Server, Debian, Kali, macOS)
 	arch := runtime.GOARCH
 	goos := runtime.GOOS
 	if goos == "windows" {
 		return "⬆️ [/update] Gebruik op Windows: scoop update anubis of irm https://raw.githubusercontent.com/Groennesby/Anubis-Agent/main/install.ps1 | iex", nil
 	}
 
-	tarURL := fmt.Sprintf("https://github.com/Groennesby/Anubis-Agent/releases/download/v1.0.0/anubis-%s-%s.tar.gz", goos, arch)
-	client := &http.Client{Timeout: 30 * time.Second}
+	tarURL := fmt.Sprintf("https://github.com/Groennesby/Anubis-Agent/releases/download/v1.0.0/anubis-%s-%s.tar.gz?t=%d", goos, arch, time.Now().Unix())
+	client := &http.Client{Timeout: 45 * time.Second}
 	resp, err := client.Get(tarURL)
 	if err != nil {
 		return "", fmt.Errorf("kon update niet downloaden van %s: %w", tarURL, err)
@@ -126,18 +113,46 @@ func SelfUpdate(t Theme) (string, error) {
 	}
 	defer os.Remove(tmpBin)
 
+	updatedCount := installBinaryToTargets(tmpBin, targetPaths)
+	return fmt.Sprintf("⬆️ [/update] Nieuwste versie gedownload van GitHub Releases & %d binaire paden in-place geüpdatet!", updatedCount), nil
+}
+
+func installBinaryToTargets(tmpBin string, targetPaths []string) int {
 	updatedCount := 0
+	seen := map[string]bool{}
 	for _, tp := range targetPaths {
-		if dir := filepath.Dir(tp); dir != "" {
-			if _, dErr := os.Stat(dir); dErr == nil {
-				_ = os.Remove(tp)
-				if copyErr := copyExecutable(tmpBin, tp); copyErr == nil {
-					updatedCount++
-				}
+		if seen[tp] {
+			continue
+		}
+		seen[tp] = true
+		dir := filepath.Dir(tp)
+		if dir == "" {
+			continue
+		}
+		if _, dErr := os.Stat(dir); dErr != nil {
+			continue
+		}
+		// Only overwrite existing binary paths or standard bin paths on the current OS
+		if _, fErr := os.Stat(tp); fErr != nil && !strings.HasPrefix(tp, "/opt/homebrew/bin") && !strings.HasPrefix(tp, "/usr/bin") {
+			continue
+		}
+		_ = os.Remove(tp)
+		if copyErr := copyExecutable(tmpBin, tp); copyErr == nil {
+			updatedCount++
+			continue
+		}
+		// On Linux/Ubuntu where /usr/bin/anubis is owned by root, fall back to sudo cp -f
+		if runtime.GOOS == "linux" {
+			if err := exec.Command("sudo", "-n", "cp", "-f", tmpBin, tp).Run(); err == nil {
+				_ = exec.Command("sudo", "-n", "chmod", "755", tp).Run()
+				updatedCount++
+			} else if err := exec.Command("sudo", "cp", "-f", tmpBin, tp).Run(); err == nil {
+				_ = exec.Command("sudo", "chmod", "755", tp).Run()
+				updatedCount++
 			}
 		}
 	}
-	return fmt.Sprintf("⬆️ [/update] Nieuwste versie gedownload van GitHub Releases & %d binaire paden in-place geüpdatet!", updatedCount), nil
+	return updatedCount
 }
 
 func copyExecutable(src, dst string) error {
