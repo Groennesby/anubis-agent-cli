@@ -11,3 +11,7 @@ func ioctlTermSize() (int, int) {
 func RegisterResizeSignal(ch chan os.Signal) {
 	// Windows console resize handled via environment / console API fallback
 }
+
+func ReExecSelf() {
+	// On Windows, newly spawned invocations use the updated binary
+}

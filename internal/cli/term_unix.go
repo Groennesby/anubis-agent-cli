@@ -5,6 +5,7 @@ package cli
 import (
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"unsafe"
 )
@@ -27,4 +28,16 @@ func ioctlTermSize() (int, int) {
 
 func RegisterResizeSignal(ch chan os.Signal) {
 	signal.Notify(ch, syscall.SIGWINCH)
+}
+
+// ReExecSelf replaces the currently running process in memory with the newly updated binary on disk.
+func ReExecSelf() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if realPath, err := filepath.EvalSymlinks(exe); err == nil && realPath != "" {
+		exe = realPath
+	}
+	_ = syscall.Exec(exe, os.Args, os.Environ())
 }

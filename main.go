@@ -217,13 +217,15 @@ func main() {
 				fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, true))
 
 			case "/update":
-				fmt.Printf("%s⬆️ [/update] Anubis Agent in-place updaten (geen de-installatie nodig)...%s\n", theme.PrimaryGold, theme.Reset)
+				fmt.Printf("%s⬆️ [/update] Anubis Agent in-place updaten & direct herladen in geheugen...%s\n", theme.PrimaryGold, theme.Reset)
 				uMsg, uErr := cli.SelfUpdate(theme)
 				if uErr != nil {
 					fmt.Printf("%s⚠️ [/update] Fout tijdens updaten: %v%s\n\n", theme.HighlightRed, uErr, theme.Reset)
 				} else {
 					messages = append(messages, uMsg)
-					fmt.Printf("%s%s%s\n\n", theme.SuccessEmerald, uMsg, theme.Reset)
+					fmt.Printf("%s%s%s\n", theme.SuccessEmerald, uMsg, theme.Reset)
+					fmt.Printf("%s🔄 Proces wordt nu automatisch in-memory herladen naar de nieuwste versie...%s\n\n", theme.LapisBlue, theme.Reset)
+					cli.ReExecSelf()
 				}
 
 			case "/new":
