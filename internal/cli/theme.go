@@ -92,10 +92,10 @@ func LoadTheme(name string) Theme {
 	}
 }
 
-// RenderColorizedAnubis renders the Braille Anubis ASCII art in Warm Gold (#FFD700)
+// RenderColorizedAnubis renders the Tomb-Sealed Braille Anubis ASCII art in Warm Gold (#FFD700)
 // and highlights the eye row (row index 5) with Anubis Crimson Red (#FF2D2D).
 func RenderColorizedAnubis(t Theme) []string {
-	rawLines := strings.Split(AnubisASCII, "\n")
+	rawLines := strings.Split(VerifiedAnubisASCII(), "\n")
 	out := make([]string, 0, len(rawLines))
 	for idx, line := range rawLines {
 		if idx == 5 {
