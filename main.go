@@ -27,29 +27,24 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 	stopSpinner := make(chan struct{})
 	spinnerDone := make(chan struct{})
 
-	fmt.Printf("\n%s╭─ 🧠 ANUBIS COGNITIVE EVALUATION & EXECUTION TRACE ───────────────────────────╮%s\n", theme.PrimaryGold, theme.Reset)
-
+	// Only print trace events when an actual autonomous tool (Web Search, yt-dlp, Bootstrap) runs.
+	// Never re-print startup/brain metadata on every turn so the focus stays 100% on the conversation!
 	onTrace := func(ev anubis.TraceEvent) {
 		if atomic.LoadInt32(&firstTokenReceived) == 1 {
 			return
 		}
-		fmt.Print("\r\x1b[K")
-		fmt.Printf("%s│%s %s %s[%-38s]%s %s %s(%.2fms)%s\n",
-			theme.PrimaryGold, theme.Reset,
+		if ev.Phase != "TOOL_EXEC" && ev.Phase != "BOOTSTRAP" {
+			return
+		}
+		fmt.Print("\r\x1b[2K")
+		fmt.Printf("  %s %s[%s]%s %s\n",
 			ev.Icon,
 			theme.LapisBlue, ev.Title, theme.Reset,
-			theme.TextPrimary+ev.Detail+theme.Reset,
-			theme.TextMuted, ev.ElapsedMs, theme.Reset,
+			theme.TextMuted+ev.Detail+theme.Reset,
 		)
 	}
 
-	thinkingStages := []string{
-		"Analyseren van semantische intentie & .synapse geheugen-vectoren...",
-		"Evalueren van uitvoeringsplan & Tomb Seal Sandbox parameters...",
-		"Valideren van logica, randvoorwaarden & Weighing of the Heart...",
-		"Synthetiseren van respons over de Bicameral Bridge...",
-	}
-
+	// Short (<45 chars) spinner line so it NEVER wraps or repeats lines on 80-column Ubuntu Server terminals!
 	go func() {
 		defer close(spinnerDone)
 		idx := 0
@@ -63,33 +58,114 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 					return
 				}
 				sp := cli.AnubisSpinners[idx%len(cli.AnubisSpinners)]
-				stageText := thinkingStages[(idx/12)%len(thinkingStages)]
 				idx++
 				elapsed := time.Since(t0).Seconds()
-				fmt.Printf("\r%s│%s 💭 %s%s [Deep Evaluation & Thinking]%s %s%s (%.1fs)%s",
-					theme.PrimaryGold, theme.Reset,
+				fmt.Printf("\r\x1b[2K  %s%s%s %s💭 Anubis denkt na... (%.1fs)%s",
 					theme.PrimaryGold, sp, theme.Reset,
-					theme.TextMuted, stageText, elapsed, theme.Reset)
+					theme.TextMuted, elapsed, theme.Reset)
 			}
 		}
 	}()
 
-	tStart := time.Now()
-	tokenCount := 0
+	// Real-time Gemini-style <think>...</think> streaming state machine:
+	// state 0 = detecting start of stream (<think> vs direct answer)
+	// state 1 = streaming live inside <think>...</think> (Gemini-style reasoning block)
+	// state 2 = streaming final answer
+	state := 0
+	initBuf := ""
+	thinkPending := ""
+	stripLeadingThinkNewline := true
+	stripLeadingAnswerNewline := false
+
+	printThoughtChunk := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+		if stripLeadingThinkNewline {
+			chunk = strings.TrimLeft(chunk, " \t\r\n")
+			if chunk == "" {
+				return
+			}
+			stripLeadingThinkNewline = false
+		}
+		formatted := strings.ReplaceAll(chunk, "\n", "\n"+theme.PrimaryGold+"   │ "+theme.Reset+theme.TextMuted)
+		fmt.Print(theme.TextMuted + formatted + theme.Reset)
+	}
+
+	printAnswerChunk := func(chunk string) {
+		if chunk == "" {
+			return
+		}
+		if stripLeadingAnswerNewline {
+			chunk = strings.TrimLeft(chunk, " \t\r\n")
+			if chunk == "" {
+				return
+			}
+			stripLeadingAnswerNewline = false
+		}
+		fmt.Print(theme.TextPrimary + chunk + theme.Reset)
+	}
 
 	onToken := func(tok string) {
 		if atomic.CompareAndSwapInt32(&firstTokenReceived, 0, 1) {
 			close(stopSpinner)
 			<-spinnerDone
-			ttft := time.Since(tStart).Seconds()
-			fmt.Print("\r\x1b[K")
-			fmt.Printf("%s│%s ✅ %s[Cognitive Synthesis Complete          ]%s Eerste token ontvangen na %.2fs — live stream actief\n",
-				theme.PrimaryGold, theme.Reset, theme.SuccessEmerald, theme.Reset, ttft)
-			fmt.Printf("%s╰──────────────────────────────────────────────────────────────────────────────╯%s\n", theme.PrimaryGold, theme.Reset)
-			fmt.Printf("%s%s𓂀 Anubis (%s):%s ", theme.Bold, theme.PrimaryGold, eng.ActiveModel, theme.Reset)
+			fmt.Print("\r\x1b[2K")
 		}
-		tokenCount++
-		fmt.Print(theme.TextPrimary + tok + theme.Reset)
+
+		switch state {
+		case 0:
+			initBuf += tok
+			trimmed := strings.TrimLeft(initBuf, " \t\r\n")
+			if strings.HasPrefix(trimmed, "<think>") {
+				state = 1
+				fmt.Printf("\n%s💭 Denken & Redeneren:%s\n%s   │ %s",
+					theme.PrimaryGold, theme.Reset, theme.PrimaryGold, theme.Reset)
+				rest := trimmed[len("<think>"):]
+				thinkPending = rest
+			} else if len(trimmed) >= 8 || (len(trimmed) > 0 && !strings.HasPrefix("<think>", trimmed) && !strings.HasPrefix(trimmed, "<")) {
+				state = 2
+				fmt.Printf("\n%s%s𓂀 Anubis (%s):%s\n", theme.Bold, theme.PrimaryGold, eng.ActiveModel, theme.Reset)
+				printAnswerChunk(trimmed)
+				initBuf = ""
+				return
+			} else {
+				return
+			}
+			fallthrough
+
+		case 1:
+			if state == 1 && initBuf == "" {
+				thinkPending += tok
+			}
+			initBuf = ""
+			if idx := strings.Index(thinkPending, "</think>"); idx != -1 && !strings.HasSuffix(thinkPending[:idx], "...") {
+				before := strings.TrimRight(thinkPending[:idx], " \t\r\n")
+				printThoughtChunk(before)
+				fmt.Printf("\n\n%s%s𓂀 Anubis (%s):%s\n", theme.Bold, theme.PrimaryGold, eng.ActiveModel, theme.Reset)
+				after := thinkPending[idx+len("</think>"):]
+				thinkPending = ""
+				state = 2
+				stripLeadingAnswerNewline = true
+				printAnswerChunk(after)
+			} else {
+				// Keep any trailing partial tag like "<" or "</thin" or trailing newline buffered until next token
+				if lastLt := strings.LastIndex(thinkPending, "<"); lastLt != -1 && len(thinkPending)-lastLt < len("</think>") {
+					printThoughtChunk(thinkPending[:lastLt])
+					thinkPending = thinkPending[lastLt:]
+				} else if strings.HasSuffix(thinkPending, "\n") {
+					trimmedRight := strings.TrimRight(thinkPending, "\r\n")
+					printThoughtChunk(trimmedRight)
+					thinkPending = thinkPending[len(trimmedRight):]
+				} else {
+					printThoughtChunk(thinkPending)
+					thinkPending = ""
+				}
+			}
+
+		case 2:
+			printAnswerChunk(tok)
+		}
 	}
 
 	var (
@@ -106,18 +182,14 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 	if atomic.CompareAndSwapInt32(&firstTokenReceived, 0, 1) {
 		close(stopSpinner)
 		<-spinnerDone
-		fmt.Print("\r\x1b[K")
-		fmt.Printf("%s╰──────────────────────────────────────────────────────────────────────────────╯%s\n", theme.PrimaryGold, theme.Reset)
+		fmt.Print("\r\x1b[2K")
+	} else if state == 0 && initBuf != "" {
+		fmt.Printf("\n%s%s𓂀 Anubis (%s):%s\n%s%s%s", theme.Bold, theme.PrimaryGold, eng.ActiveModel, theme.Reset, theme.TextPrimary, strings.TrimSpace(initBuf), theme.Reset)
+	} else if state == 1 && thinkPending != "" {
+		printThoughtChunk(thinkPending)
 	}
 
-	totalSec := time.Since(tStart).Seconds()
-	tokPerSec := 0.0
-	if totalSec > 0 {
-		tokPerSec = float64(tokenCount) / totalSec
-	}
-	fmt.Printf("\n%s[⚡ .synapse: %.2fms | ⚖️ Heart: %d/%d (%s) | 🚀 %.1f tok/s | ⏱️ %.1fs]%s\n\n",
-		theme.TextMuted, recall.LatencyMs, verdict.HeartScore, verdict.FeatherScore, verdict.Status, tokPerSec, totalSec, theme.Reset)
-
+	fmt.Print("\n\n")
 	return reply, verdict, recall
 }
 
