@@ -30,11 +30,6 @@ func SelfUpdate(t Theme) (string, error) {
 		exePath = realPath
 	}
 
-	// Clean up any legacy 2-n 'annubis' binaries to prevent conflicts
-	for _, oldTwoN := range []string{"/opt/homebrew/bin/annubis", "/usr/bin/annubis", "/usr/local/bin/annubis"} {
-		_ = os.Remove(oldTwoN)
-	}
-
 	home, _ := os.UserHomeDir()
 	userAnubisBin := filepath.Join(home, ".anubis", "bin", "anubis")
 	userLocalBin := filepath.Join(home, ".local", "bin", "anubis")
@@ -45,8 +40,7 @@ func SelfUpdate(t Theme) (string, error) {
 		userAnubisBin,
 		userLocalBin,
 		"/opt/homebrew/bin/anubis",
-		"/opt/homebrew/Cellar/anubis/1.3.0/bin/anubis",
-		"/opt/homebrew/Cellar/anubis/1.0.0/bin/anubis",
+		"/home/linuxbrew/.linuxbrew/bin/anubis",
 		"/usr/bin/anubis",
 		"/usr/local/bin/anubis",
 	}
@@ -65,7 +59,7 @@ func SelfUpdate(t Theme) (string, error) {
 		if out, buildErr := cmd.CombinedOutput(); buildErr == nil {
 			defer os.Remove(tmpBin)
 			updatedCount := installBinaryToTargets(tmpBin, targetPaths)
-			_ = copyExecutable(tmpBin, filepath.Join(localSrc, "bin", "anubis"))
+			_ = copyExecutableAtomic(tmpBin, filepath.Join(localSrc, "bin", "anubis"))
 			logs = append(logs, fmt.Sprintf("⬆️ [/update] Gecompileerd vanaf nieuwste broncode & %d 'anubis' paden in-place geüpdatet!", updatedCount))
 			return strings.Join(logs, "\n"), nil
 		} else {
@@ -76,7 +70,7 @@ func SelfUpdate(t Theme) (string, error) {
 	arch := runtime.GOARCH
 	goos := runtime.GOOS
 	if goos == "windows" {
-		return "⬆️ [/update] Gebruik op Windows: scoop update anubis of irm https://raw.githubusercontent.com/Groennesby/Anubis-Agent/main/install.ps1 | iex", nil
+		return "⬆️ [/update] Gebruik op Windows: scoop update anubis", nil
 	}
 
 	tarURL := fmt.Sprintf("https://github.com/Groennesby/Anubis-Agent/releases/latest/download/anubis-%s-%s.tar.gz?t=%d", goos, arch, time.Now().Unix())
@@ -139,11 +133,7 @@ func installBinaryToTargets(tmpBin string, targetPaths []string) int {
 		if _, dErr := os.Stat(dir); dErr != nil {
 			continue
 		}
-		if _, fErr := os.Stat(tp); fErr != nil && !strings.HasPrefix(tp, "/opt/homebrew/bin") && !strings.HasPrefix(tp, "/usr/bin") && !strings.HasPrefix(tp, "/usr/local/bin") && !strings.Contains(tp, ".anubis/bin") && !strings.Contains(tp, ".local/bin") {
-			continue
-		}
-		_ = os.Remove(tp)
-		if copyErr := copyExecutable(tmpBin, tp); copyErr == nil {
+		if copyErr := copyExecutableAtomic(tmpBin, tp); copyErr == nil {
 			updatedCount++
 			continue
 		}
@@ -157,21 +147,28 @@ func installBinaryToTargets(tmpBin string, targetPaths []string) int {
 	return updatedCount
 }
 
-func copyExecutable(src, dst string) error {
+func copyExecutableAtomic(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
+	tmpDst := fmt.Sprintf("%s.new.%d", dst, time.Now().UnixNano())
+	out, err := os.OpenFile(tmpDst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
-
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		_ = os.Remove(tmpDst)
 		return err
 	}
-	return os.Chmod(dst, 0o755)
+	_ = out.Close()
+	_ = os.Chmod(tmpDst, 0o755)
+	if err := os.Rename(tmpDst, dst); err != nil {
+		_ = os.Remove(tmpDst)
+		return err
+	}
+	return nil
 }
