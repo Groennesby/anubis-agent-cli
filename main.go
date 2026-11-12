@@ -105,6 +105,15 @@ func main() {
 		case "--version", "-v", "version":
 			fmt.Printf("%s𓂀 ANUBIS AGENT CLI v1.0.0 (Go Bicameral Engine | Hermes Gold Theme)%s\n", theme.PrimaryGold, theme.Reset)
 			return
+		case "update", "--update":
+			fmt.Printf("%s𓂀 Anubis Self-Updater starten...%s\n", theme.PrimaryGold, theme.Reset)
+			msg, uErr := cli.SelfUpdate(theme)
+			if uErr != nil {
+				fmt.Fprintf(os.Stderr, "%s⚠️ Update fout: %v%s\n", theme.HighlightRed, uErr, theme.Reset)
+				os.Exit(1)
+			}
+			fmt.Printf("%s%s%s\n", theme.SuccessEmerald, msg, theme.Reset)
+			return
 		case "--render-preview":
 			verdict := eng.Scales.WeighHeart("startup", "anubis interactive dashboard")
 			msgs := []string{
@@ -206,6 +215,16 @@ func main() {
 			switch cmd {
 			case "/status", "/dashboard":
 				fmt.Print(cli.RenderResponsiveDashboard(theme, eng, verdict, messages, true))
+
+			case "/update":
+				fmt.Printf("%s⬆️ [/update] Anubis Agent in-place updaten (geen de-installatie nodig)...%s\n", theme.PrimaryGold, theme.Reset)
+				uMsg, uErr := cli.SelfUpdate(theme)
+				if uErr != nil {
+					fmt.Printf("%s⚠️ [/update] Fout tijdens updaten: %v%s\n\n", theme.HighlightRed, uErr, theme.Reset)
+				} else {
+					messages = append(messages, uMsg)
+					fmt.Printf("%s%s%s\n\n", theme.SuccessEmerald, uMsg, theme.Reset)
+				}
 
 			case "/new":
 				newSessID := eng.NewSession()

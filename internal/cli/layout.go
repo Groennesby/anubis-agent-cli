@@ -103,7 +103,7 @@ func RenderResponsiveDashboard(t Theme, eng *anubis.BicameralEngine, lastVerdict
 			}
 		}
 		sb.WriteString(div + "\n")
-		sb.WriteString(fmt.Sprintf("%s𓂀 /new /model /renew /retry /theme /memory /tomb /judgement /rea /opsec%s\n", t.LapisBlue, t.Reset))
+		sb.WriteString(fmt.Sprintf("%s𓂀 /new /model /renew /retry /update /theme /memory /tomb /judgement /rea /opsec%s\n", t.LapisBlue, t.Reset))
 		return sb.String()
 	}
 
@@ -238,7 +238,7 @@ func RenderResponsiveDashboard(t Theme, eng *anubis.BicameralEngine, lastVerdict
 		verdictColor(t, lastVerdict), lastVerdict.HeartScore, lastVerdict.FeatherScore, t.Reset,
 		t.SuccessEmerald, t.Reset)
 	sb.WriteString(padBoxLine(t, statusLine, innerW) + "\n")
-	cmdHint := fmt.Sprintf(" %sCommands: /new  /model  /renew  /retry  /theme  /memory  /tomb  /judgement  /rea  /opsec  /duat  /quit%s", t.TextMuted, t.Reset)
+	cmdHint := fmt.Sprintf(" %sCommands: /new  /model  /renew  /retry  /update  /theme  /memory  /tomb  /judgement  /rea  /opsec  /duat  /quit%s", t.TextMuted, t.Reset)
 	sb.WriteString(padBoxLine(t, cmdHint, innerW) + "\n")
 	sb.WriteString(botBorder + "\n")
 
