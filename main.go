@@ -27,6 +27,29 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 	stopSpinner := make(chan struct{})
 	spinnerDone := make(chan struct{})
 
+	fmt.Printf("\n%s╭─ 🧠 ANUBIS COGNITIVE EVALUATION & EXECUTION TRACE ───────────────────────────╮%s\n", theme.PrimaryGold, theme.Reset)
+
+	onTrace := func(ev anubis.TraceEvent) {
+		if atomic.LoadInt32(&firstTokenReceived) == 1 {
+			return
+		}
+		fmt.Print("\r\x1b[K")
+		fmt.Printf("%s│%s %s %s[%-38s]%s %s %s(%.2fms)%s\n",
+			theme.PrimaryGold, theme.Reset,
+			ev.Icon,
+			theme.LapisBlue, ev.Title, theme.Reset,
+			theme.TextPrimary+ev.Detail+theme.Reset,
+			theme.TextMuted, ev.ElapsedMs, theme.Reset,
+		)
+	}
+
+	thinkingStages := []string{
+		"Analyseren van semantische intentie & .synapse geheugen-vectoren...",
+		"Evalueren van uitvoeringsplan & Tomb Seal Sandbox parameters...",
+		"Valideren van logica, randvoorwaarden & Weighing of the Heart...",
+		"Synthetiseren van respons over de Bicameral Bridge...",
+	}
+
 	go func() {
 		defer close(spinnerDone)
 		idx := 0
@@ -40,10 +63,13 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 					return
 				}
 				sp := cli.AnubisSpinners[idx%len(cli.AnubisSpinners)]
+				stageText := thinkingStages[(idx/12)%len(thinkingStages)]
 				idx++
 				elapsed := time.Since(t0).Seconds()
-				fmt.Printf("\r%s%s Anubis (%s) denkt na & laadt .synapse tensoren... (%.1fs)%s",
-					theme.PrimaryGold, sp, eng.ActiveModel, elapsed, theme.Reset)
+				fmt.Printf("\r%s│%s 💭 %s%s [Deep Evaluation & Thinking]%s %s%s (%.1fs)%s",
+					theme.PrimaryGold, theme.Reset,
+					theme.PrimaryGold, sp, theme.Reset,
+					theme.TextMuted, stageText, elapsed, theme.Reset)
 			}
 		}
 	}()
@@ -55,7 +81,11 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 		if atomic.CompareAndSwapInt32(&firstTokenReceived, 0, 1) {
 			close(stopSpinner)
 			<-spinnerDone
+			ttft := time.Since(tStart).Seconds()
 			fmt.Print("\r\x1b[K")
+			fmt.Printf("%s│%s ✅ %s[Cognitive Synthesis Complete          ]%s Eerste token ontvangen na %.2fs — live stream actief\n",
+				theme.PrimaryGold, theme.Reset, theme.SuccessEmerald, theme.Reset, ttft)
+			fmt.Printf("%s╰──────────────────────────────────────────────────────────────────────────────╯%s\n", theme.PrimaryGold, theme.Reset)
 			fmt.Printf("%s%s𓂀 Anubis (%s):%s ", theme.Bold, theme.PrimaryGold, eng.ActiveModel, theme.Reset)
 		}
 		tokenCount++
@@ -68,15 +98,16 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 		recall  anubis.RecallResult
 	)
 	if isRetry {
-		reply, verdict, recall, _ = eng.StreamRetryLast(context.Background(), onToken)
+		reply, verdict, recall, _ = eng.StreamRetryLastWithTrace(context.Background(), onTrace, onToken)
 	} else {
-		reply, verdict, recall, _ = eng.StreamQuery(context.Background(), prompt, onToken)
+		reply, verdict, recall, _ = eng.StreamQueryWithTrace(context.Background(), prompt, onTrace, onToken)
 	}
 
 	if atomic.CompareAndSwapInt32(&firstTokenReceived, 0, 1) {
 		close(stopSpinner)
 		<-spinnerDone
 		fmt.Print("\r\x1b[K")
+		fmt.Printf("%s╰──────────────────────────────────────────────────────────────────────────────╯%s\n", theme.PrimaryGold, theme.Reset)
 	}
 
 	totalSec := time.Since(tStart).Seconds()
@@ -84,7 +115,7 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 	if totalSec > 0 {
 		tokPerSec = float64(tokenCount) / totalSec
 	}
-	fmt.Printf("\n%s[⚡ .synapse: %.2fms | ⚖️ Heart: %d/%d (%s) | %.1f tok/s | %.1fs]%s\n\n",
+	fmt.Printf("\n%s[⚡ .synapse: %.2fms | ⚖️ Heart: %d/%d (%s) | 🚀 %.1f tok/s | ⏱️ %.1fs]%s\n\n",
 		theme.TextMuted, recall.LatencyMs, verdict.HeartScore, verdict.FeatherScore, verdict.Status, tokPerSec, totalSec, theme.Reset)
 
 	return reply, verdict, recall
