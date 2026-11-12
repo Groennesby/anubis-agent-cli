@@ -122,6 +122,7 @@ func streamWithThinkingSpinner(theme cli.Theme, eng *anubis.BicameralEngine, pro
 }
 
 func main() {
+	cli.DelegateToNewerUserBinary()
 	cwd, _ := os.Getwd()
 	eng, err := anubis.NewBicameralEngine(cwd)
 	if err != nil {
@@ -134,7 +135,7 @@ func main() {
 	if len(args) > 0 {
 		switch args[0] {
 		case "--version", "-v", "version":
-			fmt.Printf("%s𓂀 ANUBIS AGENT CLI v1.0.0 (Go Bicameral Engine | Hermes Gold Theme)%s\n", theme.PrimaryGold, theme.Reset)
+			fmt.Printf("%s𓂀 ANUBIS AGENT CLI v1.3.0 (Go Bicameral Engine | Startup Brain + Hermes Gold Trace)%s\n", theme.PrimaryGold, theme.Reset)
 			return
 		case "update", "--update":
 			fmt.Printf("%s𓂀 Anubis Self-Updater starten...%s\n", theme.PrimaryGold, theme.Reset)

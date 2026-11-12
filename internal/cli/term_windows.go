@@ -15,3 +15,6 @@ func RegisterResizeSignal(ch chan os.Signal) {
 func ReExecSelf() {
 	// On Windows, newly spawned invocations use the updated binary
 }
+
+func DelegateToNewerUserBinary() {
+}

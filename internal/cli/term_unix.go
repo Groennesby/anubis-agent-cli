@@ -32,6 +32,12 @@ func RegisterResizeSignal(ch chan os.Signal) {
 
 // ReExecSelf replaces the currently running process in memory with the newly updated binary on disk.
 func ReExecSelf() {
+	home, _ := os.UserHomeDir()
+	userBin := filepath.Join(home, ".anubis", "bin", "anubis")
+	if st, err := os.Stat(userBin); err == nil && !st.IsDir() {
+		_ = os.Setenv("ANUBIS_DELEGATED", "1")
+		_ = syscall.Exec(userBin, os.Args, os.Environ())
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return
@@ -40,4 +46,31 @@ func ReExecSelf() {
 		exe = realPath
 	}
 	_ = syscall.Exec(exe, os.Args, os.Environ())
+}
+
+// DelegateToNewerUserBinary checks at startup if ~/.anubis/bin/anubis was updated by /update and is newer than /usr/bin/anubis.
+func DelegateToNewerUserBinary() {
+	if os.Getenv("ANUBIS_DELEGATED") == "1" {
+		return
+	}
+	home, _ := os.UserHomeDir()
+	userBin := filepath.Join(home, ".anubis", "bin", "anubis")
+	uStat, err := os.Stat(userBin)
+	if err != nil || uStat.IsDir() {
+		return
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if realPath, lErr := filepath.EvalSymlinks(exe); lErr == nil && realPath != "" {
+		exe = realPath
+	}
+	if exe == userBin {
+		return
+	}
+	if eStat, sErr := os.Stat(exe); sErr == nil && uStat.ModTime().After(eStat.ModTime()) {
+		_ = os.Setenv("ANUBIS_DELEGATED", "1")
+		_ = syscall.Exec(userBin, os.Args, os.Environ())
+	}
 }

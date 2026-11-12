@@ -14,8 +14,7 @@ import (
 	"time"
 )
 
-// SelfUpdate updates the Anubis Agent CLI & GUI binaries in-place without requiring uninstall/reinstall.
-// Works seamlessly on both macOS (/opt/homebrew/bin) and Linux/Ubuntu Server (/usr/bin, /usr/local/bin).
+// SelfUpdate updates the Anubis Agent CLI & GUI binaries in-place (100% standardized on 'anubis' with 1 'n').
 func SelfUpdate(t Theme) (string, error) {
 	var logs []string
 	localSrc := "/Users/macm1pro/Documents/Anubis Agent/anubis-agent-cli"
@@ -31,15 +30,25 @@ func SelfUpdate(t Theme) (string, error) {
 		exePath = realPath
 	}
 
+	// Clean up any legacy 2-n 'annubis' binaries to prevent conflicts
+	for _, oldTwoN := range []string{"/opt/homebrew/bin/annubis", "/usr/bin/annubis", "/usr/local/bin/annubis"} {
+		_ = os.Remove(oldTwoN)
+	}
+
+	home, _ := os.UserHomeDir()
+	userAnubisBin := filepath.Join(home, ".anubis", "bin", "anubis")
+	userLocalBin := filepath.Join(home, ".local", "bin", "anubis")
+	_ = os.MkdirAll(filepath.Dir(userAnubisBin), 0o755)
+	_ = os.MkdirAll(filepath.Dir(userLocalBin), 0o755)
+
 	targetPaths := []string{
-		"/opt/homebrew/bin/annubis",
+		userAnubisBin,
+		userLocalBin,
 		"/opt/homebrew/bin/anubis",
-		"/opt/homebrew/Cellar/annubis/1.0.0/bin/annubis",
-		"/opt/homebrew/Cellar/annubis/1.0.0/bin/anubis",
+		"/opt/homebrew/Cellar/anubis/1.3.0/bin/anubis",
+		"/opt/homebrew/Cellar/anubis/1.0.0/bin/anubis",
 		"/usr/bin/anubis",
-		"/usr/bin/annubis",
 		"/usr/local/bin/anubis",
-		"/usr/local/bin/annubis",
 	}
 	if exePath != "" {
 		targetPaths = append(targetPaths, exePath)
@@ -57,22 +66,20 @@ func SelfUpdate(t Theme) (string, error) {
 			defer os.Remove(tmpBin)
 			updatedCount := installBinaryToTargets(tmpBin, targetPaths)
 			_ = copyExecutable(tmpBin, filepath.Join(localSrc, "bin", "anubis"))
-			_ = copyExecutable(tmpBin, filepath.Join(localSrc, "bin", "annubis"))
-			logs = append(logs, fmt.Sprintf("⬆️ [/update] Gecompileerd vanaf nieuwste broncode & %d binaire paden in-place geüpdatet!", updatedCount))
+			logs = append(logs, fmt.Sprintf("⬆️ [/update] Gecompileerd vanaf nieuwste broncode & %d 'anubis' paden in-place geüpdatet!", updatedCount))
 			return strings.Join(logs, "\n"), nil
 		} else {
 			logs = append(logs, fmt.Sprintf("Lokale build overgeslagen (%s), schakel over naar GitHub Release download...", strings.TrimSpace(string(out))))
 		}
 	}
 
-	// Download latest release tarball directly from GitHub Releases (works on Ubuntu Server, Debian, Kali, macOS)
 	arch := runtime.GOARCH
 	goos := runtime.GOOS
 	if goos == "windows" {
 		return "⬆️ [/update] Gebruik op Windows: scoop update anubis of irm https://raw.githubusercontent.com/Groennesby/Anubis-Agent/main/install.ps1 | iex", nil
 	}
 
-	tarURL := fmt.Sprintf("https://github.com/Groennesby/Anubis-Agent/releases/download/v1.0.0/anubis-%s-%s.tar.gz?t=%d", goos, arch, time.Now().Unix())
+	tarURL := fmt.Sprintf("https://github.com/Groennesby/Anubis-Agent/releases/latest/download/anubis-%s-%s.tar.gz?t=%d", goos, arch, time.Now().Unix())
 	client := &http.Client{Timeout: 45 * time.Second}
 	resp, err := client.Get(tarURL)
 	if err != nil {
@@ -114,7 +121,7 @@ func SelfUpdate(t Theme) (string, error) {
 	defer os.Remove(tmpBin)
 
 	updatedCount := installBinaryToTargets(tmpBin, targetPaths)
-	return fmt.Sprintf("⬆️ [/update] Nieuwste versie gedownload van GitHub Releases & %d binaire paden in-place geüpdatet!", updatedCount), nil
+	return fmt.Sprintf("⬆️ [/update] Nieuwste versie gedownload van GitHub Releases & %d 'anubis' paden in-place geüpdatet!", updatedCount), nil
 }
 
 func installBinaryToTargets(tmpBin string, targetPaths []string) int {
@@ -132,8 +139,7 @@ func installBinaryToTargets(tmpBin string, targetPaths []string) int {
 		if _, dErr := os.Stat(dir); dErr != nil {
 			continue
 		}
-		// Only overwrite existing binary paths or standard bin paths on the current OS
-		if _, fErr := os.Stat(tp); fErr != nil && !strings.HasPrefix(tp, "/opt/homebrew/bin") && !strings.HasPrefix(tp, "/usr/bin") {
+		if _, fErr := os.Stat(tp); fErr != nil && !strings.HasPrefix(tp, "/opt/homebrew/bin") && !strings.HasPrefix(tp, "/usr/bin") && !strings.HasPrefix(tp, "/usr/local/bin") && !strings.Contains(tp, ".anubis/bin") && !strings.Contains(tp, ".local/bin") {
 			continue
 		}
 		_ = os.Remove(tp)
@@ -141,13 +147,9 @@ func installBinaryToTargets(tmpBin string, targetPaths []string) int {
 			updatedCount++
 			continue
 		}
-		// On Linux/Ubuntu where /usr/bin/anubis is owned by root, fall back to sudo cp -f
 		if runtime.GOOS == "linux" {
 			if err := exec.Command("sudo", "-n", "cp", "-f", tmpBin, tp).Run(); err == nil {
 				_ = exec.Command("sudo", "-n", "chmod", "755", tp).Run()
-				updatedCount++
-			} else if err := exec.Command("sudo", "cp", "-f", tmpBin, tp).Run(); err == nil {
-				_ = exec.Command("sudo", "chmod", "755", tp).Run()
 				updatedCount++
 			}
 		}
